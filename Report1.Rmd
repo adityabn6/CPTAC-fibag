@@ -1,0 +1,590 @@
+---
+title: "Summer Project Report 1"
+subtitle: "Tumor Data EDA"
+author: "Aditya Jalin"
+output:
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+    css: !expr here::here("www", "web_report.css")
+editor_options:
+  chunk_output_type: console
+---
+
+```{css echo=FALSE,eval=FALSE}
+h1 {
+    font-size: 34px;
+    color: #337;
+}
+p {
+    margin: 20px 0 20px;
+}
+```
+
+```{r rmarkdown-setup, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r echo = FALSE}
+load("Report1.RData")
+library(tidyverse)
+library(readxl)
+library(arrow)
+library(readxl)
+library(data.table)
+library(dplyr)
+library(gridExtra)
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("biomaRt")
+library("biomaRt")
+theme_set(theme_minimal())
+data_path = dirname(getwd())
+
+Cancers = list(
+  c("CCRCC")
+)
+names(Cancers) = c("Pan-Kidney")
+
+# Gather Data
+
+#clinical <- read.table(file = paste(data_path,'/Clinical_data/Clinical_data/ALL/MSSM/clinical_Pan-cancer.Jan2022.tsv',sep = ""), sep = '\t', header = TRUE,fill = TRUE)
+
+num_sample_list <- read_excel(paste(data_path,'/Case_sample_ID/Case_sample_ID/CPTAC-pancancer-sample-list-BCM.xlsx',sep=""))
+
+#Data frame of tumors containing covariates
+#tumour_match <- read.delim(paste(data_path,'/Clinical_data/Clinical_data/ALL/MSSM/clinical_Pan-cancer.Jan2022.tsv', sep=""))
+
+#ensembl <- useEnsembl(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+
+```
+# Gene Expression
+
+-----
+
+## Data Overview
+
+```{r Image, echo=FALSE, fig.width=20, fig.height=16,fig.align='center'}
+knitr::include_graphics(here::here("Images", "Image1.png"))
+
+```
+
+```{r BCM Gene, echo =FALSE}
+#Dataframe of number of tumors vs normal for BCm
+#num_sample_list <- read_excel(paste(data_path,"/Case_sample_ID/Case_sample_ID/CPTAC-pancancer-sample-list-BCM.xlsx",sep=""))
+
+#Only for BCm
+num_sample_c <- num_sample_list[num_sample_list$idx=="CCRCC",]
+tumour_match_c <- tumour_match[tumour_match$tumor_code=="CCRCC",]
+tumour_match_c <- tumour_match_c[complete.cases(tumour_match_c$discovery_study.type_of_analyzed_samples), ]
+
+print(paste("CCRCC",": Tumours=",num_sample_c$Tumor,"Non-Tumours=",num_sample_c$Normal))
+#This is for the BCM dataset
+
+#Reading gene data
+#Gene_BCM <- read.delim(paste(data_path,"/Gene_expression/Gene_expression/ccRCC/BCM/CCRCC-gene_rsem_removed_circRNA_tumor_normal_UQ_log2(x+1)_BCM.txt",sep=""))
+
+
+Gene_BCM$id <- rownames(Gene_BCM)
+#Separating into Tumor vs Normal
+Gene_BCM_Tumor <- Gene_BCM[, grepl("_T$", colnames(Gene_BCM))]
+Gene_BCM_Tumor$id <- rownames(Gene_BCM_Tumor)
+length(Gene_BCM_Tumor)
+Gene_BCM_Normal <- Gene_BCM[, grepl("_A$", colnames(Gene_BCM))]
+Gene_BCM_Normal$id < rownames(Gene_BCM_Normal)
+length(Gene_BCM_Normal)
+
+
+```
+
+```{r Gene Broad}
+
+#Gene_Broad <- read_parquet(paste(data_path,'/Gene_expression/Gene_expression/ccRCC/Broad/CCRCC.gene_tpm.parquet',sep=""))
+
+#Gene Map For Broad
+broad_id_map<- read.delim(paste(data_path,"/Gene_expression/Gene_expression/README/Broad/sample_descriptions.tsv",sep=""))
+broad_id_c <- broad_id_map[broad_id_map$cohort=="CCRCC",]
+
+# Create a new dataframe with column names replaced
+Gene_Broad_new <- Gene_Broad
+colnames(Gene_Broad_new)[-c(1, length(colnames(Gene_Broad_new)))] <- broad_id_c$GDC_id[match(colnames(Gene_Broad)[-c(1, length(colnames(Gene_Broad_new)))], broad_id_c$sample_id)]
+
+
+# Split dataframe based on tissue_type
+Gene_Broad_Tumor <- Gene_Broad_new[, c("Name",broad_id_c$GDC_id[ broad_id_c$tissue_type == "Tumor"])]
+colnames(Gene_Broad_Tumor)[1] <- "id"
+
+Gene_Broad_Normal <- Gene_Broad_new[, c("Name",broad_id_c$GDC_id[ broad_id_c$tissue_type == "Normal"])]
+```
+
+```{r Gene Wash-U+AWG}
+
+
+# Wash-U data
+#Gene_WashU_Tumor <- read.delim(paste(data_path,'/Gene_expression/Gene_expression/ccRCC/WashU/ccRCC_tumor_RNA-Seq_Expr_WashU_FPKM.tsv.gz',sep=""))
+#Gene_WashU_Normal <- read.delim(paste(data_path,'/Gene_expression/Gene_expression/ccRCC/WashU/ccRCC_NAT_RNA-Seq_Expr_WashU_FPKM.tsv.gz',sep=""))
+Gene_WashU_Tumor<-Gene_WashU_Tumor[,-2]
+colnames(Gene_WashU_Tumor)[1] <- "id"
+
+
+Gene_AWG_Tumor <- read.delim(paste(data_path,'/Gene_expression/Gene_expression/ccRCC/AWG_data_freeze/RNA_rpkm_tumor_normal.tsv',sep=""))
+
+Genes_c <- getBM(attributes = c("ensembl_gene_id","external_gene_name"),
+                    filters = "external_gene_name",
+                    values = Gene_AWG_Tumor$geneID,
+                    mart = ensembl)
+genes_c <- subset(Genes_c,!duplicated(external_gene_name))
+Gene_AWG_Tumor <- merge(genes_c,Gene_AWG_Tumor,by.x="external_gene_name",by.y="geneID",all=TRUE) 
+Gene_AWG_Tumor <- Gene_AWG_Tumor[,-1]
+colnames(Gene_AWG_Tumor)[1] <- "id"
+
+
+```
+
+
+-----
+
+## Exploration
+* AWG Freeze data is unlabelled
+* Using the exact ensemble version leads to depreciation in number of proteins
+* Even after removing the version, some genes still aren't present in the ensemble api call
+
+```{r plotting, echo=FALSE}
+
+result <- function(Gene_Plot){
+  gene_result<-Gene_Plot[1:1000,] %>%
+  mutate(mean_value = rowMeans(across(-id))) %>%
+  mutate(variance = apply(.[,-which(colnames(.)=="id")], 1, var)) %>%
+  filter(variance != 0 & mean_value != 0) %>%
+  mutate(indicator_var = case_when(
+    rank(variance, ties.method = "first") <= 5 ~ "Low Variance",
+    rank(variance, ties.method = "last") >= (nrow(.) - 4) ~ "High Variance",
+  )) %>%
+  mutate(indicator_mean = case_when(
+    rank(mean_value, ties.method = "first") <= 5 ~ "Low Mean",
+    rank(mean_value, ties.method = "last") >= (nrow(.) - 4) ~ "High Mean"
+  )) %>%
+  mutate(
+    similarity = sapply(
+      mean_value,
+      function(x) sum(mean_value<=1.1*x & mean_value>=0.9*x)))%>%
+  
+  filter(
+    indicator_mean %in% c("High Mean", "Low Mean")|
+      indicator_var %in% c("High Variance", "Low Variance")) %>%
+  dplyr::select(c(id, mean_value, variance, indicator_mean, indicator_var, similarity))
+  
+  return(gene_result)
+}
+
+
+combined_result <-function(c_result){
+  
+ ret_val<-c_result %>%
+  mutate(indicator = ifelse(
+    is.na(indicator_mean),
+    indicator_var,
+    ifelse(
+      is.na(indicator_var),
+      indicator_mean,
+      paste(indicator_mean, "+", indicator_var, sep = ""))))%>%
+  separate_longer_delim(indicator, delim = "+")%>%
+  dplyr::select(c(id,mean_value,variance,similarity,indicator))
+
+  ret_val <- ret_val %>% mutate(cv=mean_value/sqrt(variance))
+  return(ret_val)
+  
+}
+
+theme_set(theme_minimal())
+plot_data <- function(final_result,htype){
+  final_result %>% ggplot(mapping = aes(x = 1:length(id),
+                       y = mean_value,
+                       color=indicator,
+                       size=similarity,
+                       alpha=cv)) +
+    geom_point() +
+    facet_wrap(~ indicator,scales="free") +
+    labs(title = "Average Gene Expression", subtitle = htype,x="Tumor Samples", y="Mean Gene Expression")
+  
+}
+
+plot_list <- list()
+plot_data(combined_result(result(Gene_BCM_Tumor)),"BCM")
+plot_data(combined_result(result(Gene_Broad_Tumor)),"Broad")
+plot_data(combined_result(result(Gene_WashU_Tumor)),"WashU")
+plot_data(combined_result(result(Gene_AWG_Tumor)),"AWG")
+
+
+```
+
+```{r clean,echo=FALSE, eval=FALSE}
+# rm(broad_id_map)
+# rm(Gene_BCM)
+# rm(Gene_BCM_Normal)
+# rm(Gene_Broad)
+# rm(Gene_Broad_new)
+# rm(tumour_match)
+# rm(num_sample_list)
+# rm(Meth)
+
+```
+
+
+Having trouble reading the methylation data due to size
+```{r MethylationBCM}
+library(data.table)
+Meth <- fread(paste(data_path,"/DNA_methylation/DNA_methylation/ALL/WashU/CCRCC_allPatients.081621.csv.gz",sep = ""), nrows  = 100)
+
+Meth_info <- Meth[,1:2]
+
+Meth_info <- Meth_info %>%
+  mutate(
+    chromosome = as.numeric(stringr::str_extract(index, "(?<=chr)\\d+(?=:)")),
+    start_pos = as.numeric(stringr::str_extract(index, "(?<=:)\\d+")),
+    end_pos = as.numeric(stringr::str_extract(index, "(?<=-)\\d+"))
+  )
+
+Genes <- Gene_BCM_Tumor$id
+Genes <- Gene_Broad_Tumor$id
+Genes <- Gene_WashU_Tumor$id
+Genes <- Gene_AWG_Tumor$id
+
+
+genes <- sub("\\..*", "", Genes)
+
+
+#Taking only the names and not version
+
+attributes_d <- c("ensembl_gene_id","ensembl_gene_id_version",
+                "external_gene_name",
+                "start_position",
+                "end_position","chromosome_name")
+gene_mapping2 <- getBM(attributes = attributes_d,
+                      filters = "ensembl_gene_id",
+                      values = genes,
+                      mart = ensembl)
+length(which(!genes %in% gene_mapping2$ensembl_gene_id))
+
+# Assuming you have a variable named 'Meth' containing the methylation data
+
+# Step 1: Create an empty vector to store the genes with methylation
+genes_with_methylation <- character()
+
+# Step 2: Iterate over each gene and check for methylation
+for (i in seq(1:dim(gene_mapping2)[1])) {
+  gene_start <- gene_mapping2$start_position[i]
+  gene_end <- gene_mapping2$end_position[i]
+  
+  # Check if any methylation values fall within the gene's start and end positions
+  if (any(Meth_info$start_pos >= gene_start & Meth_info$end_pos <= gene_end)) {
+    genes_with_methylation <- c(genes_with_methylation, gene_mapping2$ensembl_gene_id[i])
+  }
+}
+
+# Step 1: Create an empty dataframe with gene IDs as rows
+gene_data <- data.frame(gene_id = gene_mapping2$ensembl_gene_id, stringsAsFactors = FALSE)
+
+# Step 2: Add columns from the Meth dataframe to the gene_data dataframe
+gene_data$Methylation <- gene_data$gene_id %in% genes_with_methylation
+sum(gene_data$Methylation)
+
+```
+
+```{r Protein, echo=FALSE}
+# gene_protein <- read.delim(paste(
+# data_path,                          "/Proteome/Proteome/ALL/UMich_Proteome-GENCODE34/CCRCC/Report_abundance_groupby=gene_protNorm=MD_gu=2.tsv",sep=""))
+
+# protein_protein <- read.delim(paste(
+#                           data_path,
+# "/Proteome/Proteome/ALL/UMich_Proteome-GENCODE34/CCRCC/Report_abundance_groupby=protein_protNorm=MD_gu=2.tsv",sep=""))
+
+protein_num<-sapply(gene_protein$Proteins, function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
+
+gene_num<-sapply(protein_protein$Gene, function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
+
+test_protein_level <- protein_protein[,5:length(protein_protein)]
+colnames(test_protein_level)[1] <- "id"
+test_gene_level <- gene_protein[,5:length(gene_protein)]
+colnames(test_protein_level)[1] <- "id"
+colnames(test_gene_level)[1] <- "id"
+
+
+plot_data(combined_result(result(test_protein_level)),"By Protein")
+plot_data(combined_result(result(test_gene_level)),"By Gene")
+
+
+```
+
+```{r CNV, eval= FALSE}
+all_data_by_genes <- read.delim(paste(
+                         data_path, "/Somatic_cnv/Somatic_cnv/ALL/Broad_pipeline_wxs/all_data_by_genes.txt",sep=""))
+
+
+c<-gene_mapping2$external_gene_name
+d <- all_data_by_genes$Gene.Symbol
+
+
+e<-sapply(d, function(x) strsplit(x, "|", fixed = TRUE)[[1]][1])
+sum((!e %in% c))
+
+a<-all_data_by_genes[1,3:length(all_data_by_genes)]
+b<-unlist((a[1,2:length(a)]/length(a)))
+
+library(dplyr)
+
+result <- all_data_by_genes[1:1000,-c(2,3)] %>%
+  mutate(mean_value = rowMeans(across(-Gene.Symbol))) %>%
+  mutate(variance = apply(.[,-1], 1, var)) %>%
+  mutate(indicator = case_when(
+    rank(variance, ties.method ="first") <= 5 ~ "High Variance",
+    rank(variance, ties.method = "first") >= (nrow(.) - 4) ~ "Low Variance",
+    rank(mean_value, ties.method = "first") <= 5 ~ "High Mean",
+    rank(mean_value, ties.method = "first") >= (nrow(.) - 4) ~ "Low Mean"
+  )) %>%
+  filter(indicator %in% c("High Mean", "Low Mean")|indicator %in% c("High Variance", "Low Variance"))%>%
+  dplyr::select(c(Gene.Symbol,mean_value,variance,indicator))
+
+rank(result$mean_value,ties.method = "first")
+rank(result$variance,ties.method = "first")
+
+result
+
+```
+
+-----
+
+# Overplotting
+
+### `r kableExtra::text_spec("Exercise 1", color = "#1696d2")`
+
+A data set doesn't need thousands of observations to have overplotting. Consider a simple example using the `mpg` data set from `library(ggplot2)`. 
+
+<font color="#55b748">Step 1:</font> Create this plot using the `mpg` data set with variables `cyl` and `hwy`. 
+
+```{r echo = FALSE}
+mpg %>%
+  ggplot() +
+  geom_point(aes(cyl, hwy))
+
+```
+
+<font color="#55b748">Step 2:</font> Use `nrow(mpg)` to count the number of observations in `mpg`. Is there overplotting?
+
+<font color="#55b748">Step 3:</font> Replace `geom_point()` with `geom_jitter()`. What happens?
+
+<font color="#55b748">Step 4:</font> Experiment with the `width` and `height` arguments. You can see the documentation with `?geom_jitter`. What seems to be the best "best" combination?
+
+The first pillar in The Seven Pillars of Statistical Wisdon by Stephen Stigler identifies an interesting paradox: 
+
+>"By aggregating, you lose the identity of the individual, so you’re throwing away information, but you’re also gaining information of a different sort. No one wants to be reduced to a statistic, but by losing the identity of the individual, you are producing information about the group."
+
+`geom_jitter()` creates a similar paradox. Just like how we gain information by throwing out information with aggregation, we can gain clarity by introducing errors to our data with `geom_jitter()`. 
+
+-----
+
+### `r kableExtra::text_spec("Exercise 2", color = "#1696d2")`
+
+Now we'll focus on the `diamonds` data set from `library(ggplot2)`. It contains information about 53,940 diamonds.
+
+```{r}
+glimpse(diamonds)
+
+```
+
+Jittering helps with overplotting with modestly sized data sets. It is not helpful with larger data sets. Let's look at the diamonds data set with jitter:
+
+```{r fig.height = 3}
+without_jitter <- diamonds %>%
+  ggplot(aes(x = carat, y = price)) +
+  geom_point() +
+  labs(subtitle = "Without Jitter")
+
+with_jitter <- diamonds %>%
+  ggplot(aes(x = carat, y = price)) +
+  geom_jitter() +
+  labs(subtitle = "With Jitter")
+without_jitter
+with_jitter
+
+```
+
+<font color="#55b748">Step 1:</font> Create a scatter plot with the diamonds data set that shows the relationship between `carat` and `price`. 
+
+<font color="#55b748">Step 2:</font> Try the following changes:
+
+* Change the size of points with the `size` argument in `geom_point()`.
+* Change to hollow points with `shape = 1` in `geom_point()`.
+* Add transparency to points with `alpha = 0.1` in `geom_point()`.
+* Use `facet_wrap()` and `facet_grid()`
+* Try sampling with the following:
+
+```
+diamonds %>% 
+  slice_sample(n = 1000) %>%
+  ggplot() + ...
+
+```
+
+<font color="#55b748">Step 3:</font> Which do you prefer? What did you learn about the `diamonds` data set with these different techniques?
+
+-----
+
+### `r kableExtra::text_spec("Exercise 3", color = "#1696d2")`
+
+We'll continue with the `diamonds` data set. This time we'll experiment with some summaries instead of visualizing all observations directly. 
+
+<font color="#55b748">Step 1:</font> Create a scatter plot with the diamonds data set that shows the relationship between `carat` and `price`. 
+
+<font color="#55b748">Step 2:</font> Try the following changes:
+
+* Use `geom_hex()` instead of `geom_point()` for multi-dimensional binning with hexagons. Experiment with different values for the argument `bins`.
+* Add `geom_smooth()` to add a model on top of the points. 
+
+-----
+
+### Long Data Summary
+
+Overplotting is a major challenge even with modestly sized data. There are at least three causes for the problem:
+
+1. Frequent values
+2. Lack of precision
+3. Many observations
+
+We've explored some solutions to overplotting, but the right solution depends on the cause of the overplotting:
+
+* Adding noise works for frequent values and lack of precision, but does not work for many observations.
+* Faceting can help with all three causes depending on the data.
+* Adding transparency almost always helps.
+* Binning the data or adding summaries doesn't add much clarity for frequent values or lack of precision, but is essential for very large data sets.
+* Sampling is also a useful tool when interested in general trends, but sampling can obscure anomalies, rare events, and uncommon relationships.
+
+-----
+
+# Wide Data
+
+Techniques for visualizing wide data, and dimension reduction more broadly, are far less settled in the literature. 
+
+-----
+
+### `r kableExtra::text_spec("Exercise 4", color = "#1696d2")`
+
+Approach 1: parallel coordinate plots (Inselberg 1985)
+
+<font color="#55b748">Step 1:</font> Install and load the `GGally` package. 
+
+<font color="#55b748">Step 2:</font> Install and load the `palmerpenguins` package. 
+
+<font color="#55b748">Step 3:</font> Pipe (`%>%`) the data into `ggparcoord(columns = 2:5)`.
+
+<font color="#55b748">Step 4:</font> Add `alphaLines = 0.3` inside of `ggparcoord()`.
+
+<font color="#55b748">Step 5:</font> Add `groupColumn = 1` inside of `ggparcoord()`.
+
+-----
+
+### `r kableExtra::text_spec("Exercise 5", color = "#1696d2")`
+
+Approach 2: scatterplot matrices (Carr 1985)
+
+<font color="#55b748">Step 1:</font> Install and load the `GGally` package. 
+
+<font color="#55b748">Step 2:</font> Use `select(cty, hwy, year, fl, displ)` to pick a subset of variables from the `mpg` data set. **Warning:** This function will crash R if too many variables are included. 
+
+<font color="#55b748">Step 3:</font> Run `ggpairs()` on the subset of variables from `mpg`.
+
+-----
+
+### `r kableExtra::text_spec("Exercise 6", color = "#1696d2")`
+
+Here we have a data set with 493 votes from two years of the 114th Senate (2015-2017). The data set has 100 rows and 495 columns. An affirmative vote is `1`, a negative vote is `-1`, and an abstention is `0`. The data are from [Bradley Robinson](https://data.world/bradrobinson/us-senate-voting-records) and this example is based on an earlier analysis by Professor Sivan Leviyang. 
+
+<font color="#55b748">Step 1:</font> Load the votes data with
+
+```
+votes <- read_csv(here::here("data", "votes.csv"))
+
+```
+
+<font color="#55b748">Step 2:</font> Run PCA with the following code
+
+```{r eval = FALSE}
+# select the numeric variables
+votes_numeric <- votes %>%
+  select_if(is.numeric)
+
+# run PCA
+votes_pca <- prcomp(votes_numeric)
+
+# extract the principle components
+votes_pcs <- votes_pca %>%
+  .$x %>%
+  as_tibble()
+
+# combine the pcs to the names and parties
+votes_pcs <- bind_cols(
+  select(votes, name, party),
+  votes_pcs
+)
+
+summary(votes_pca)
+
+```
+
+<font color="#55b748">Step 3:</font> Use `x = PC1`, `y = PC2`, and `geom_point()` to plot the data. 
+
+<font color="#55b748">Step 4:</font> Add `party` as color. Try labeling a few individual observations with `geom_text()`. 
+
+<font color="#55b748">Step 5:</font> Add `x` and `y` labels that include the proportion of variation explained by each PC. 
+
+```{r include = FALSE, eval = FALSE}
+# plot the data
+names <- c("Bernie Sanders", "Ted Cruz", "Joe Manchin", "Susan Collins")
+
+ggplot() +
+  geom_point(
+    data = votes_pcs, aes(PC1, PC2, color = party),
+    alpha = 0.5
+  ) +
+  geom_text(
+    data = filter(votes_pcs, name %in% names), 
+    aes(PC1, PC2, label = name)
+  ) +
+  scale_color_manual(values = c("blue", "#228B22", "red")) +
+  labs(
+    title = "PC1 and PC2 of 114th Senate Votes",
+    x = "PC1 (0.63 of Variation)",
+    y = "PC2 (0.05 of Variation)"
+  ) +
+  guides(text = NULL)
+
+```
+
+PCA performs linear dimension reduction. Observations are projected on to a line, plane, or hyperplane. There are non-linear dimension reduction techniques like UMAP, which projects observations on to manifolds, but there techniques are much more difficult to use and are difficult to communicate. 
+
+Other techniques for wide data include but are not limited to:
+
+* t-Distributed Stochastic Neighbor Embedding (t-SNE) (Maaten and Hinton, 2008)
+* Uniform Manifold Approximation and Projection (UMAP) (Mciness et al., 2018)
+* Grand tours (Asimov, 1985)
+* Rotating plots (Cook and Miller, 2006)
+
+-----
+
+### Wide Data Summary
+
+Wide data are an even more challenging issue than overplotting. We've seen two options for visualizing many dimensions directly and we've explored one tool for dimension reduction. 
+
+* Parallel coordinate plots
+* Pairwise comparison plots
+* Dimension reduction
+  * PCA
+  * t-SNE and UMAP
+
+**Suggestion**
+
+* If you have fewer than 50 variables, then look at relationships between variables and build up to a larger model of relationships. 
+* If you have 50 or more variables, then start with dimension reduction and then unpack the important relationships from the dimension reduction. 

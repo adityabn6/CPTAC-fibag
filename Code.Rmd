@@ -1,0 +1,199 @@
+---
+title: "Summer_Project"
+author: "Aditya Jalin"
+date: "2023-05-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(arrow)
+library(readxl)
+```
+
+Reading the BCM Data 
+```{r loop}
+Cancers = list(
+  c("CCRCC")
+)
+names(Cancers) = c("Pan-Kidney")
+
+# Gather Data
+
+clinical <- read.table(file = 'C:/Users/adityabn/Desktop/Veera/pancan/pancan/Clinical_data/Clinical_data/ALL/MSSM/clinical_Pan-cancer.Jan2022.tsv', sep = '\t', header = TRUE,fill = TRUE)
+
+
+#Dataframe of tumors containing covariates
+tumour_match <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Clinical_data/Clinical_data/ALL/MSSM/clinical_Pan-cancer.Jan2022.tsv")
+
+sample_descriptions <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Gene_expression/README/Broad/sample_descriptions.tsv")
+dir.create("Data")
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r BCM Gene}
+#Dataframe of number of tumors vs normal for BCm
+num_sample_list <- read_excel("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Case_sample_ID/Case_sample_ID/CPTAC-pancancer-sample-list-BCM.xlsx")
+
+#Only for BCm
+num_sample_c <- num_sample_list[num_sample_list$idx=="CCRCC",]
+tumour_match_c <- tumour_match[tumour_match$tumor_code=="CCRCC",]
+tumour_match_c <- tumour_match_c[complete.cases(tumour_match_c$discovery_study.type_of_analyzed_samples), ]
+
+print(paste("CCRCC",": Tumours=",num_sample_c$Tumor,"Non-Tumours=",num_sample_c$Normal))
+#This is for the BCM dataset
+
+#Reading gene data
+Gene_BCM <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Gene_expression/ccRCC/BCM/CCRCC-gene_rsem_removed_circRNA_tumor_normal_UQ_log2(x+1)_BCM.txt")
+
+#Separating into Tumor vs Normal
+Gene_BCM_Tumor <- Gene_BCM[, grep("_T$", colnames(Gene_BCM))]
+length(Gene_BCM_Tumor)
+Gene_BCM_Normal <- Gene_BCM[, grep("_A$", colnames(Gene_BCM))]
+length(Gene_BCM_Normal)
+
+```
+
+```{r Broad Gene}
+
+Gene_Broad <- read_parquet(paste(data_path,'/Gene_expression/Gene_expression/ccRCC/Broad/CCRCC.gene_tpm.parquet',sep=""))
+
+sample_descriptions_c <- sample_descriptions[sample_descriptions$cohort=="CCRCC",]
+
+# Create a new dataframe with column names replaced
+Broad_gene_data_new <- Broad_Gene_data
+colnames(Broad_gene_data_new)[-c(1, length(colnames(Broad_gene_data_new)))] <- sample_descriptions_c$GDC_id[match(colnames(Broad_Gene_data)[-c(1, length(colnames(Broad_gene_data_new)))], sample_descriptions_c$sample_id)]
+
+# Print the resulting dataframe
+print(Broad_gene_data_new)
+
+# Split dataframe based on tissue_type
+Gene_Broad_Tumor <- Broad_gene_data_new[, sample_descriptions_c$GDC_id[ sample_descriptions_c$tissue_type == "Tumor"]]
+Gene_Broad_Noraml <- sample_descriptions_c$GDC_id[ sample_descriptions_c$tissue_type == "Normal"]
+```
+
+
+```{r Gene Wash-U}
+
+
+# Wash-U data
+Gene_WashU_Tumor <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Gene_expression/ccRCC/WashU/ccRCC_tumor_RNA-Seq_Expr_WashU_FPKM.tsv.gz")
+Gene_WashU_Noraml <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Gene_expression/ccRCC/WashU/ccRCC_NAT_RNA-Seq_Expr_WashU_FPKM.tsv.gz")
+
+```
+
+```{r Gene AWG}
+Gene_AWG_Tumor <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Gene_expression/ccRCC/AWG_data_freeze/RNA_rpkm_tumor_normal.tsv")
+
+
+
+```
+
+```{r}
+
+###PROTEIN
+gene_protein <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Proteome/Proteome/ALL/UMich_Proteome-GENCODE34/CCRCC/Report_abundance_groupby=gene_protNorm=MD_gu=2.tsv")
+
+protein_protein <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Proteome/Proteome/ALL/UMich_Proteome-GENCODE34/CCRCC/Report_abundance_groupby=protein_protNorm=MD_gu=2.tsv")
+
+protein_num<-sapply(gene_protein$Proteins, function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
+
+gene_num<-sapply(protein_protein$Gene, function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
+
+meth <- read.csv("C:/Users/adityabn/Desktop/Veera/pancan/pancan/DNA_methylation/ALL/WashU/CCRCC_allPatients.081621.csv.gz")
+
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+a<-data(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+
+# Install and load required packages
+install.packages("biomaRt")
+library(biomaRt)
+
+# Specify the genome and dataset you are working with
+ensembl_dataset <- "hsapiens_gene_ensembl"  # Human genome dataset
+#ensembl_dataset <- "mmusculus_gene_ensembl"  # Mouse genome dataset
+
+# Connect to the Ensembl database
+ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+
+# Example CPG probe IDs
+cpg_probes <- c("cg00000108", "cg00000292", "cg00002426")
+
+illumina_humanwg_6_v3
+
+# Get the genomic coordinates for the CPG probes
+get_coords <- function(probe_ids) {
+  cpg_probes_info <- getBM(attributes = c("chromosome_name", "start_position", "end_position"),
+                           
+                           values = probe_ids,
+                           mart = ensembl)
+  return(cpg_probes_info)
+}
+
+# Map CPG probes to gene names
+map_to_genes <- function(cpg_probes_info) {
+  cpg_probes_info <- cpg_probes_info[complete.cases(cpg_probes_info), ]  # Remove NA values
+  
+  # Extract the genomic coordinates
+  coords <- cpg_probes_info[, c("chromosome_name", "start_position", "end_position")]
+  
+  # Map the coordinates to gene names
+  genes <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                 values = coords,
+                 mart = ensembl)
+  
+  # Merge the CPG probe information with gene names
+  merged_data <- merge(cpg_probes_info, genes, by.x = c("chromosome_name", "start_position", "end_position"),
+                       by.y = c("chromosome_name", "start_position", "end_position"), all.x = TRUE)
+  
+  return(merged_data)
+}
+
+# Perform the mapping
+cpg_probes_info <- get_coords(cpg_probes)
+mapped_data <- map_to_genes(cpg_probes_info)
+
+# Print the mapping results
+print(mapped_data)
+
+
+  mart <- useEnsembl(biomart = "ensembl", 
+                     dataset = "hsapiens_gene_ensembl")
+                     
+  getBM(attributes = c("affy_hg_u95av2", "hgnc_symbol", "chromosome_name", "band"),
+        filters    = "affy_hg_u95av2",
+        values     = c("1939_at","1503_at","1454_at"), 
+        mart       = mart)
+```
+
+```{r}
+a <- Gene_AWG_Tumor$geneID
+b<- Gene_WashU_Tumor$gene_name
+sum(a %in% b)
+#18850 which is not 19293
+#So AWG is not the same as WashU
+
+```
+
+```{r}
+all_data_by_genes <- read.delim("C:/Users/adityabn/Desktop/Veera/pancan/pancan/Somatic_cnv/Somatic_cnv/ALL/Broad_pipeline_wxs/all_data_by_genes.txt")
+
+
+c<-Broad_Gene_data$Description
+d <- all_data_by_genes$Gene.Symbol
+
+
+e<-sapply(d, function(x) strsplit(x, "|", fixed = TRUE)[[1]][1])
+sum((e %in% c))
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
