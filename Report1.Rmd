@@ -110,7 +110,10 @@ broad_id_c <- broad_id_map[broad_id_map$cohort=="CCRCC",]
 
 # Create a new dataframe with column names replaced
 Gene_Broad_new <- Gene_Broad
-colnames(Gene_Broad_new)[-c(1, length(colnames(Gene_Broad_new)))] <- broad_id_c$GDC_id[match(colnames(Gene_Broad)[-c(1, length(colnames(Gene_Broad_new)))], broad_id_c$sample_id)]
+
+lapply(Gene_Broad, function(x) colnames(x)[-c(1,dim(x))] <- broad)
+
+colnames(Gene_Broad_new)[-c(1, dim(Gene_Broad_new))] <- broad_id_c$GDC_id[match(colnames(Gene_Broad)[-c(1, length(colnames(Gene_Broad_new)))], broad_id_c$sample_id)]
 
 
 # Split dataframe based on tissue_type

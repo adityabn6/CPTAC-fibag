@@ -1,0 +1,344 @@
+---
+title: "PPT"
+author: "Aditya Jalin"
+date: "2023-05-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(ggtext)
+library(tidyr)
+library(arrow)
+library(biomaRt)
+library(gghighlight)
+library(ggtext)
+data_path = dirname(getwd())
+
+# Specify the genome and dataset you are working with
+ensembl_dataset <- "hsapiens_gene_ensembl"  # Human genome dataset
+
+# Connect to the Ensembl database
+ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Initial}
+#BCM files
+tumour_match <- read.delim(paste(data_path,'/Clinical_data/Clinical_data/ALL/MSSM/clinical_Pan-cancer.Jan2022.tsv', sep=""))
+cancer_num_BCM <- read_excel(paste(data_path,'/Case_sample_ID/Case_sample_ID/CPTAC-pancancer-sample-list-BCM.xlsx',sep=""))
+
+#BCM files
+################################################################################
+#Changed CO files. CRC to CO
+#Why aren't BRCA, CO and OV marked for BCM?
+Cancers_BCM <- c(
+  "BRCA","CO", "HNSCC", "LUAD",
+  "OV", "PDA", "UCEC", "LSCC", "ccRCC")
+
+Gene_BCM <- sapply(
+  Cancers_BCM,
+  function(x) file.exists(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/',x,'/BCM/',
+      paste0(
+        ifelse(!x %in% c("BRCA","CO","OV"),
+               paste0(
+                 ifelse(x=="PDA",
+                        "PDAC",
+                        x),
+                 "-gene_rsem_removed_circRNA_tumor_normal_UQ_log2(x+1)_BCM.txt"),
+               paste0(ifelse(x=="CO",
+                             "CRC",
+                             x),
+                      "-gene_RSEM_tumor_normal_UQ_log2(x+1)_BCM.txt"))))))
+
+Gene_BCM
+
+Gene_BCM <- sapply(
+  Cancers_BCM,
+  function(x) read.delim(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/',x,'/BCM/',
+      paste0(
+        ifelse(!x %in% c("BRCA","CO","OV"),
+               paste0(
+                 ifelse(x=="PDA",
+                        "PDAC",
+                        x),
+                 "-gene_rsem_removed_circRNA_tumor_normal_UQ_log2(x+1)_BCM.txt"),
+               paste0(ifelse(x=="CO",
+                             "CRC",
+                             x),
+                      "-gene_RSEM_tumor_normal_UQ_log2(x+1)_BCM.txt"))))))
+
+
+Gene_BCM_New <- sapply(Gene_BCM, function(df) {
+  df$Name <- rownames(df)
+  return(df)
+})
+Gene_BCM <- Gene_BCM_New
+
+Gene_BCM_New <- lapply(Gene_BCM, function(df) {
+  ensembl_gene_ids <- sub("\\..*", "", rownames(df))
+  df<- df[!duplicated(ensembl_gene_ids),]
+  ensembl_gene_ids <- sub("\\..*", "", rownames(df))
+  #Second time is needed
+  
+  gene_names <- getBM(attributes = c("external_gene_name","ensembl_gene_id"),
+                      filters = "ensembl_gene_id",
+                      values = ensembl_gene_ids,
+                      mart = ensembl)
+  unmatched_ids <- !ensembl_gene_ids %in% gene_names$ensembl_gene_id
+  df<-df[!unmatched_ids,]
+  df$ID <- gene_names$ensembl_gene_id
+  df$Name <- gene_names$external_gene_name
+  
+  return(df)
+})
+
+Gene_BCM <- Gene_BCM_New
+
+for (i in seq_along(Gene_BCM)) {
+  Gene_BCM[[i]]$Description <- Gene_Names_BCM[[i]]
+}
+
+Gene_BCM_Tumor <- sapply(Gene_BCM, function(x) x[,-grep("_A$",colnames(x))])
+Gene_BCM_Normal <- sapply(Gene_BCM, function(x) x[,-grep("_T$",colnames(x))])
+
+#Counting tumors acrros cancers
+num_tumors_BCM <- data.frame(Cancer=names(Gene_BCM),Tumor=rep(0,length(Gene_BCM)),Normal=rep(0,length(Gene_BCM)))
+for (i in names(Gene_BCM)) {
+  num_tumors_BCM[num_tumors_BCM$Cancer==i,"Tumor"] <- dim(Gene_BCM_Tumor[[i]])[2]
+  num_tumors_BCM[num_tumors_BCM$Cancer==i,"Normal"] <- dim(Gene_BCM_Normal[[i]])[2]
+}
+
+
+
+#Broad files
+################################################################################
+IDmap_Broad<- read.delim(
+  paste(
+    data_path,"/Gene_expression/Gene_expression/README/Broad/sample_descriptions.tsv",sep=""))
+#removing poly-As and MEDUL since it's only there in Broad
+IDmap_Broad <- IDmap_Broad[!(grepl("-polyA$", IDmap_Broad$cohort) | grepl("^MEDUL", IDmap_Broad$cohort)), ]
+
+#Order matters
+Cancers_Broad <- c(
+  "BRCA","CO", "OV", "ccRCC", "GBM", "HNSCC", "LSCC",
+  "LUAD","PDA", "UCEC")
+
+
+Gene_Broad <- sapply(
+  Cancers_Broad,
+  function(x) file.exists(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/', x, '/Broad/',
+      paste0(
+        ifelse(x=="CO",
+               "Colon",
+               ifelse(x=="OV",
+                      "Ovary",
+                      ifelse(x=="PDA","PDAC",toupper(x)))),
+        ".gene_tpm.parquet"
+      ))))
+Gene_Broad
+
+Gene_Broad <- sapply(
+  Cancers_Broad,
+  function(x) read_parquet(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/', x, '/Broad/',
+      paste0(
+        ifelse(x=="CO",
+               "Colon",
+               ifelse(x=="OV",
+                      "Ovary",
+                      ifelse(x=="PDA","PDAC",toupper(x)))),
+        ".gene_tpm.parquet"
+      ))))
+
+#Matching using the readme file
+IDmap_Broad$cohort <- Cancers_Broad[match(IDmap_Broad$cohort, unique(IDmap_Broad$cohort))]
+GDC_id_names <- sapply(names(Gene_Broad),
+                         function(x) 
+  IDmap_Broad[IDmap_Broad$cohort==x,]$GDC_id[
+    match(
+      colnames(Gene_Broad[[x]])[-c(1, dim(Gene_Broad[[x]])[2])],
+      IDmap_Broad[IDmap_Broad$cohort==x,]$sample_id)])
+
+
+#To change the dataframes in Broad use the for loop instead of sapply because i is needed
+for (i in seq_along(Gene_Broad)) {
+  colnames(Gene_Broad[[i]])[-c(1, dim(Gene_Broad[[i]])[2])] <- GDC_id_names[[i]]
+}
+
+Gene_Broad_New <- lapply(Gene_Broad, function(df) {
+  df$ID<-df$Name
+  df$Name <- df$Description
+  #Dropping description
+  df <- df[,-1]
+  
+  return(df)
+})
+Gene_Broad <- Gene_Broad_New
+
+Gene_Broad_Tumor <- sapply(Gene_Broad, function(df) {
+  return(df[, colnames(df) %in% IDmap_Broad$GDC_id[IDmap_Broad$tissue_type == "Tumor"]])
+})
+
+Gene_Broad_Normal <- sapply(Gene_Broad, function(df) {
+  return(df[, colnames(df) %in% IDmap_Broad$GDC_id[IDmap_Broad$tissue_type == "Normal"]])
+})
+
+#Counting number of Tumors
+num_tumors_Broad <- data.frame(Cancer = names(Gene_Broad),Tumor = rep(0, length(Gene_Broad)),Normal = rep(0, length(Gene_Broad)))
+for (i in names(Gene_Broad)) {
+  num_tumors_Broad[num_tumors_Broad$Cancer == i, "Tumor"] <- dim(Gene_Broad_Tumor[[i]])[2]
+  num_tumors_Broad[num_tumors_Broad$Cancer == i, "Normal"] <- dim(Gene_Broad_Normal[[i]])[2]
+}
+
+#WashU files
+################################################################################
+#BR changed to BRCA in the files
+Cancers_WashU <- c("CO", "GBM", "HNSCC", "LUAD", "OV", "PDA", "UCEC",
+              "BRCA", "EOCG", "LSCC", "PBT", "ccRCC")
+
+
+Gene_WashU <- sapply(
+  Cancers_WashU,
+  function(x) file.exists(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/', x, '/WashU/',
+      paste0(ifelse(x %in% c("EOCG","PBT"),
+                    paste0(x,
+                           "_fpkm_uq.tsv"),
+                    ifelse(x=="UCEC",
+                           paste0("EC",'_tumor_RNA-Seq_Expr_WashU_FPKM_UQ.tsv.gz'),
+                           paste0(x,'_tumor_RNA-Seq_Expr_WashU_FPKM_UQ.tsv.gz')                                                         ))))))
+Gene_WashU
+Gene_WashU <- sapply(
+  Cancers_WashU,
+  function(x) read.delim(
+    paste0(
+      data_path,
+      '/Gene_expression/Gene_expression/', x, '/WashU/',
+      paste0(ifelse(x %in% c("EOCG","PBT"),
+                    paste0(x,
+                           "_fpkm_uq.tsv"),
+                    ifelse(x=="UCEC",
+                           paste0("EC",'_tumor_RNA-Seq_Expr_WashU_FPKM_UQ.tsv.gz'),
+                           paste0(x,'_tumor_RNA-Seq_Expr_WashU_FPKM_UQ.tsv.gz')                                                         )))),sep = "\t"))
+  
+Gene_WashU_New <- lapply(Gene_WashU, function(df) {
+  df$ID<-df$gene_id
+  df$Name <- df$gene_name
+  df <- df[,-c(1,2)]
+  
+  return(df)
+})
+Gene_WashU <- Gene_WashU_New  
+
+#All samples seem to be tumors
+#ECOG and PBT values are weird
+
+
+
+
+
+
+
+#Gene_BCM <- read.delim(paste(data_path,"/Gene_expression/Gene_expression/ccRCC/BCM/CCRCC-gene_rsem_removed_circRNA_tumor_normal_UQ_log2(x+1)_BCM.txt",sep=""))
+
+pivot_num_tumors <- function(num_tumors) {
+  cancer_long <- num_tumors %>%
+    pivot_longer(cols = c("Tumor", "Normal"),
+                 names_to = "Sample",
+                 values_to = "Number")
+  return(cancer_long)
+}
+
+
+theme_set(theme_minimal())
+
+library(ggplot2)
+
+plot_num_cancer <- function(num_cancer_pivot) {
+  plot <- num_cancer_pivot %>%
+    ggplot(aes(x = Cancer, y = Number, fill = Sample)) +
+    geom_col(position = "dodge") +
+    geom_text(
+      aes(label = Number),
+      position = position_dodge(width = 0.9),
+      vjust = -1
+    ) +
+    scale_x_discrete(expand = c(0.01, 0.05)) +
+    scale_y_continuous(limits = c(0, 200)) +
+    labs(
+      title = "Number of <span style='color:#00BFC4;'>Tumors</span> vs <span style='color:#F8766D;'>Normal</span> across different Cancers",
+      x = NULL,
+      y = NULL
+    ) +
+    theme(
+      panel.grid = element_line(color = "white"),
+      plot.title = element_markdown(hjust = 0.5),
+      axis.text.y = element_blank()
+    ) +
+    guides(fill = "none")
+  
+  return(plot)
+}
+plot_num_cancer(a)
+
+
+cancer_long %>%
+  ggplot(aes(x = idx, y = Number, fill = Sample)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = Number),
+    position = position_dodge(width = 0.9),
+    vjust = -1
+  ) +
+  scale_x_discrete(expand = c(0.1,0.1)) +
+  scale_y_continuous(limits = c(0, 150)) +
+  labs(
+    title = "Number of
+    <span style='color:#00BFC4;'>Tumors</span> vs 
+    <span style='color:#F8766D;'>Normal</span> across different Cancers",
+    x = NULL,
+    y = NULL
+  ) +
+  theme(
+    panel.grid = element_line(color = "white"),
+    plot.title = element_markdown(hjust = 0.5),
+    axis.text.y = element_blank()
+  ) +
+  guides(fill = "none")
+    
+
+
+#
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
