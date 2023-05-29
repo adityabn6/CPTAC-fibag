@@ -23,6 +23,19 @@ ensembl_dataset <- "hsapiens_gene_ensembl"  # Human genome dataset
 
 # Connect to the Ensembl database
 ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+
+
+library(parallel)
+num_cores <- detectCores()
+cl <- makeCluster(3)
+
+#clusterEvalQ(cl, library(your_package)) 
+result <- mclapply(list(a=2,b=3,c=5), function(x) x^2, mc.cores = 3)
+
+#result <- mclapply(data_list, your_function, mc.cores = num_cores)
+
+# Stop the parallel cluster
+#stopCluster(cl)
 ```
 
 ## R Markdown
@@ -329,8 +342,8 @@ cancer_long %>%
   guides(fill = "none")
     
 
+#git push origin new_branch:master
 
-#
 ```
 
 ## Including Plots
